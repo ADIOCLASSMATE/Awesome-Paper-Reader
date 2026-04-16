@@ -1,125 +1,116 @@
-# Awesome Paper Reader
+# CLAUDE.md
 
-## Ground Truth
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`RESEARCH.md` in the project root is the ground truth for project state.
+## Project Purpose
 
-If present, `.co-researcher/skills.yaml` is the project-local ground truth for preferred skillpacks and supervision preferences.
+Awesome Paper Reader is an arXiv paper reading and knowledge synthesis toolkit built on Claude Code. It automates the daily workflow of discovering, reading, and synthesizing LLM research papers.
 
-- Read it at session start.
-- Do not rewrite it during normal orchestration unless the user is explicitly running `customize` or editing project preferences.
-- Prefer asking the user over guessing when state is ambiguous.
-
-## Session Recovery
-
-On new session or after context compaction:
-1. Read `RESEARCH.md` **Pipeline Status** section first (30-second orient).
-2. Resume from **Active TODO** — do not restart from scratch.
+Core pipeline: `daily-papers` → `read-paper` → `synthesize`
 
 ## CRITICAL: PDF Policy
 
 **Remote PDFs are banned.** Never download, link to, or suggest PDF files from the internet. All remote paper reading uses LaTeX source only.
 
-**Local PDFs are allowed** via `/read-pdf` (docling extraction). When a user provides a local PDF file path, use the `read-pdf` skill to parse it. LaTeX source from arXiv remains the preferred format — always suggest `/read-paper` when an arXiv ID is detected.
-
-- Download LaTeX source from `https://arxiv.org/e-print/ID` (not `/pdf/ID`)
-- Source is extracted to `papers/inbox/{arxiv_id}/*.tex` and read with Read/Grep tools
-- If a paper has no LaTeX source (scanned/older), suggest `/read-pdf` for local PDFs or read the abstract/HTML version instead
-- Remote PDF download is never allowed — no exceptions
+- Download from `https://arxiv.org/e-print/ID` (not `/pdf/ID`)
+- Extracted to `papers/inbox/{arxiv_id}/*.tex`
+- Local PDFs are allowed via `/read-pdf` (docling extraction) when no LaTeX source exists
+- If an arXiv ID is detected, always suggest `/read-paper` instead of `/read-pdf`
 
 ## Tools
 
-Python scripts in `tools/` provide API adapters for the skills:
+Python scripts in `tools/` are the API adapters invoked by skills:
 
-| Script | Purpose | Status |
-|--------|---------|--------|
-| `tools/arxiv_fetch.py` | arXiv search + LaTeX source download | Available (stdlib only) |
-| `tools/daily_papers.py` | Daily LLM paper fetch & filter | Available (OpenAlex for author data — free, no key needed) |
-| `tools/pdf_parse.py` | PDF parsing via docling (local files only) | Available (uv managed, requires docling package) |
+| Script | CLI | Purpose | Dependencies |
+|--------|-----|---------|--------------|
+| `arxiv_fetch.py` | `search <query>`, `download <id>`, `paper <id>` | arXiv search + LaTeX source download | stdlib only |
+| `daily_papers.py` | `fetch`, `run` | Daily LLM paper fetch, relevance scoring, author quality via OpenAlex | stdlib only (OpenAlex is free, no key) |
+| `pdf_parse.py` | `parse <pdf_path>` | PDF to Markdown via docling, metadata + arXiv ID detection | docling (uv managed) |
 
-## Paper Library
+All tools are run via `uv run python tools/<script>`.
 
-Local LaTeX source uses a **dual-zone** structure:
+### Key tool behaviors
 
-```
-papers/
-├── inbox/                # Newly read papers (not yet synthesized)
-│   └── {arxiv_id}/       # Flat — no domain classification yet
-├── archive/              # Synthesized papers, organized by domain
-│   ├── safety_alignment/
-│   │   └── {arxiv_id}/
-│   ├── training_scaling/
-│   ├── reasoning/
-│   ├── architecture/
-│   ├── efficiency/
-│   ├── multimodal/
-│   ├── retrieval_rag/
-│   ├── evaluation/
-│   ├── data_synthesis/
-│   └── agent/            # Agent-only papers (not cross-cutting)
-```
+- `arxiv_fetch.py download`: Skips if directory exists; path-traversal protection on tar extraction; handles non-gzip single .tex fallback; aborts on files <1024 bytes (likely error pages)
+- `daily_papers.py run`: Relevance scoring with INCLUDE/EXCLUDE keyword dicts (per-tier cap=1 prevents keyword stacking); tier assignment: MUST_READ (≥4), INTERESTING (≥2.5), MARGINAL (≥1), SKIP (<1); OpenAlex author lookup with name normalization and conservative 0.5x scaling for approximate matches
+- `pdf_parse.py parse`: Magic-byte validation (`%PDF-`); lazy imports docling; page-number line cleanup; title extraction cascade (docling metadata → first ## heading → first # heading); arXiv ID regex detection to suggest `/read-paper`
 
-**Lifecycle**: `/read-paper` downloads to `papers/inbox/{id}/` → `/synthesize` moves to `papers/archive/{domain}/{id}/`
-- `/read-pdf` parses local PDFs to `papers/inbox/{slug}/` (contains `paper.md`, `metadata.json` instead of `.tex` files)
-- `inbox/` = "these are new, not yet organized into insights"
-- `archive/` = "these have been classified and synthesized"
-- Read papers with `Read: papers/{inbox|archive/...}/{id}/main.tex`
-- Search with `Grep: "pattern" in papers/{inbox|archive/...}/{id}/`
+## Skills
 
-## Knowledge Base
-
-Structured paper notes mirror the dual-zone structure:
-
-```
-knowledge/
-├── inbox/                    # Notes for newly read papers
-│   └── summary_{tag}.md     # Not yet synthesized
-├── archive/                  # Notes for synthesized papers
-│   └── summary_{tag}.md     # Classified and cross-analyzed
-├── syntheses/                # /synthesize outputs
-│   └── synthesis_YYYY-MM-DD.md
-└── daily/                    # daily-papers summaries
-    └── YYYY-MM-DD.md
-```
-
-- Each note covers: Problem, Method, Key Equations, Experiments, Key Insights, Connections, Questions
-- The `Connections` section in each note is critical for cross-paper synthesis
-- `/read-paper` writes to `knowledge/inbox/`
-- `/read-pdf` also writes to `knowledge/inbox/` (same template, with `**Source**: PDF (via docling)` header)
-- `/synthesize` moves notes from `knowledge/inbox/` to `knowledge/archive/` and archives .tex source to `papers/archive/{domain}/`
-
-## Skills — Paper Reading & Analysis
-
-Skills in `.claude/skills/` are invoked by name:
+Skills in `.claude/skills/` are invoked as slash commands:
 
 ### Core Pipeline
-- `daily-papers` — fetch and filter daily LLM papers from arXiv, auto-excludes CV/audio/video/robotics/etc, tiers by relevance (MUST_READ/INTERESTING/MARGINAL/SKIP), checks author quality and institution
-- `read-paper` — deep-read an arXiv paper from LaTeX source: download .tex, locate entrypoint, recursively read all sections, produce structured notes (problem/method/experiments/insights/connections) saved to `knowledge/inbox/summary_{tag}.md`
-- `read-pdf` — deep-read a local academic PDF using docling: parse PDF to Markdown, produce structured notes. Use when LaTeX source is unavailable. LaTeX source is still preferred when an arXiv ID exists.
-- `synthesize` — cross-paper insight formation: reads all notes in knowledge/, classifies papers by research domain, produces detailed per-domain analysis with trends, gaps, and research opportunities saved to `knowledge/syntheses/`
+
+| Skill | Args | What it does |
+|-------|------|-------------|
+| `/daily-papers` | `[date]`, `--min-score N`, `--check-authors`, `--categories CATS` | Fetch/filter arXiv LLM papers, tier by relevance, enrich with author data, save to `knowledge/daily/` |
+| `/read-paper` | `<arxiv-id-or-url>`, `--focus method\|experiments\|insights`, `--tag NAME` | Download LaTeX source, recursively read all sections, produce structured notes to `knowledge/inbox/summary_{tag}.md` |
+| `/read-pdf` | `<local-pdf-path>`, `--focus`, `--tag` | Parse local PDF via docling, produce structured notes (same template, with PDF source header) |
+| `/synthesize` | `[domain]`, `--full`, `--since DATE`, `--depth quick\|normal\|deep` | Classify papers by domain, per-domain deep analysis, cross-domain synthesis, archive inbox→archive, save to `knowledge/syntheses/` |
 
 ### Search & Review
-- `arxiv` — search arXiv API by keyword, download LaTeX source, present structured summaries
-- `search-knowledge` — search across all notes in knowledge/ by topic, method, author, or keyword
-- `review` — adversarial critique of papers/drafts with FATAL/MAJOR/MINOR severity ratings
 
-### Skill Management
-- `customize` — configures the project's skill stack and supervision preferences, writes `.co-researcher/skills.yaml`
-- `skillpack` — external skill integration (Personalize), skillpack registry curation (Registry), and skill creation (Create)
+| Skill | Args | What it does |
+|-------|------|-------------|
+| `/arxiv` | `<query-or-id>`, `--max N`, `--download`, `--dir PATH` | Search arXiv API, download LaTeX source, present summaries |
+| `/search-knowledge` | `<query>`, `--type notes\|syntheses\|daily\|all`, `--tag TAG` | Multi-strategy search across all notes, syntheses, and daily lists |
+| `/review` | (runs in isolated subagent) | Adversarial critique with FATAL/MAJOR/MINOR severity, rubric in `.claude/skills/review/RUBRIC.md` |
 
-## Invocation Graph
+### Configuration
 
-- Core pipeline: `daily-papers` → `read-paper` → `synthesize`
-- PDF reading: `read-pdf` → `synthesize` (alternative entry point for local PDFs)
-- `read-paper` suggests `read-pdf` as fallback when LaTeX source is unavailable
-- `arxiv` provides standalone search/download capability
-- `search-knowledge` queries the local knowledge base across all notes, syntheses, and daily lists
-- `review` runs in isolated context (subagent)
-- `skillpack` / `customize` for meta-configuration
+| Skill | What it does |
+|-------|-------------|
+| `/customize` | Interactive skill stack configuration, writes `.co-researcher/skills.yaml` |
+| `/skillpack` | Three modes: Personalize (integrate external skills), Registry (curate skillpacks), Create (new skill) |
+
+## Dual-Zone Data Architecture
+
+Both `papers/` and `knowledge/` use the same inbox→archive lifecycle:
+
+```
+papers/inbox/{id}/        →  papers/archive/{domain}/{id}/
+knowledge/inbox/summary_  →  knowledge/archive/summary_
+```
+
+- **inbox** = newly read, not yet synthesized
+- **archive** = classified by domain, cross-analyzed
+
+`/synthesize` moves both the source files and notes from inbox to archive.
+
+### Research domains (10)
+
+Agent, Safety & Alignment, Reasoning, Training & Scaling, Efficiency, Multimodal, Retrieval & RAG, Evaluation & Benchmark, Architecture, Data & Synthesis
+
+### Note template fields
+
+Problem, Method, Key Equations, Experiments, Key Insights, **Connections** (critical for synthesis), Questions
+
+## Ground Truth
+
+- `RESEARCH.md` — project pipeline state (stage, active TODO, last/next action). Read its **Pipeline Status** section first on session recovery.
+- `.co-researcher/skills.yaml` — project-local skill preferences. Do not rewrite unless running `/customize`.
 
 ## Templates
 
 Templates in `templates/` are copied to project root on init:
 
-- `RESEARCH.md.template` → `RESEARCH.md` (living doc)
-- `LESSON.md.template` → `lessons/YYYYMMDD-slug.md` (per-session)
+- `RESEARCH.md.template` → `RESEARCH.md`
+- `LESSON.md.template` → `lessons/YYYYMMDD-slug.md`
+- `skills.yaml.template` → `.co-researcher/skills.yaml`
+
+## Skillpack Presets
+
+`skillpacks/presets/` provides 6 configurations for different research styles:
+
+| Preset | Profile |
+|--------|---------|
+| `core-only` | Minimal — core skills only |
+| `balanced` | Core + ARIS subset (default) |
+| `academic-rigor` | Core + academic-research-skills, manual supervision |
+| `literature-heavy` | Core + ARIS + feynman + academic + openalex |
+| `experiment-heavy` | Core + ARIS + nanoresearch |
+| `low-dependency` | Core + ARIS research-lit/experiment-plan only |
+
+## Git Policy
+
+`knowledge/`, `papers/`, `RESEARCH.md`, and `lessons/` are gitignored — this repo ships tools only, not user data.
