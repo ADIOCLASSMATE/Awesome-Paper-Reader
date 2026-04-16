@@ -1,0 +1,12 @@
+{
+  "tasks": [
+    {
+      "id": "72a65cc8",
+      "cron": "57 8 * * 1-5",
+      "prompt": "Run /daily-papers to discover today's new LLM papers on arXiv. Present the filtered and tiered list to the user.",
+      "createdAt": 1776149481907,
+      "lastFiredAt": 1776329523078,
+      "recurring": true
+    }
+  ]
+}
