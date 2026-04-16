@@ -12,9 +12,6 @@ wheels/
 # OS files
 .DS_Store
 
-# Claude Code session files
-.claude/
-
 # Personal paper data (user-specific)
 knowledge/
 papers/

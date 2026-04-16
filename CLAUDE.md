@@ -69,7 +69,7 @@ Both `papers/` and `knowledge/` use the same inbox→archive lifecycle:
 
 ```
 papers/inbox/{id}/        →  papers/archive/{domain}/{id}/
-knowledge/inbox/summary_  →  knowledge/archive/summary_
+knowledge/inbox/summary_  →  knowledge/archive/{domain}/summary_
 ```
 
 - **inbox** = newly read, not yet synthesized

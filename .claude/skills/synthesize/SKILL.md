@@ -25,7 +25,7 @@ Papers and notes follow a lifecycle:
 
 ```
 /read-paper → papers/inbox/{id}/ + knowledge/inbox/summary_{tag}.md   (new, unorganized)
-/synthesize → papers/archive/{domain}/{id}/ + knowledge/archive/summary_{tag}.md  (classified, cross-analyzed)
+/synthesize → papers/archive/{domain}/{id}/ + knowledge/archive/{domain}/summary_{tag}.md  (classified, cross-analyzed)
 ```
 
 - **inbox/** = newly read papers, not yet synthesized into insights
@@ -195,15 +195,19 @@ After producing the synthesis, **move all inbox papers and notes to the archive*
 For each paper that was in `knowledge/inbox/`:
 
 1. **Determine its domain** from the classification in Step 3
-2. **Move the knowledge note** from `knowledge/inbox/summary_{tag}.md` to `knowledge/archive/summary_{tag}.md`
+2. **Move the knowledge note** from `knowledge/inbox/summary_{tag}.md` to `knowledge/archive/{domain}/summary_{tag}.md`
+   - Create the domain directory if it doesn't exist: `mkdir -p knowledge/archive/{domain}`
 3. **Move the .tex source** from `papers/inbox/{id}/` to `papers/archive/{domain}/{id}/`
    - Create the domain directory if it doesn't exist: `mkdir -p papers/archive/{domain}`
    - Domain directory names use snake_case: `safety_alignment`, `training_scaling`, `reasoning`, `architecture`, `efficiency`, `multimodal`, `retrieval_rag`, `evaluation`, `data_synthesis`, `agent`
 
+**Both `knowledge/archive/` and `papers/archive/` must use the same domain subdirectory structure.**
+
 Example:
 ```bash
-# Note: from inbox to archive
-mv knowledge/inbox/summary_agent_security.md knowledge/archive/summary_agent_security.md
+# Note: from inbox to domain-organized archive (same structure as papers/)
+mkdir -p knowledge/archive/safety_alignment
+mv knowledge/inbox/summary_agent_security.md knowledge/archive/safety_alignment/summary_agent_security.md
 
 # Source: from inbox to domain-organized archive
 mkdir -p papers/archive/safety_alignment
