@@ -46,7 +46,7 @@ Skills in `.claude/skills/` are invoked as slash commands:
 | `/daily-papers` | `[date]`, `--min-score N`, `--check-authors`, `--categories CATS` | Fetch/filter arXiv LLM papers, tier by relevance, enrich with author data, save to `knowledge/daily/` |
 | `/read-paper` | `<arxiv-id-or-url>`, `--focus method\|experiments\|insights`, `--tag NAME` | Download LaTeX source, recursively read all sections, produce structured notes to `knowledge/inbox/summary_{tag}.md` |
 | `/read-pdf` | `<local-pdf-path>`, `--focus`, `--tag` | Parse local PDF via docling, produce structured notes (same template, with PDF source header) |
-| `/synthesize` | `[domain]`, `--full`, `--since DATE`, `--depth quick\|normal\|deep` | Classify papers by domain, per-domain deep analysis, cross-domain synthesis, archive inbox→archive, save to `knowledge/syntheses/` |
+| `/synthesize` | `[domain]`, `--full`, `--since DATE`, `--depth quick\|normal\|deep` | **Two-phase pipeline**: Phase 1 reads .tex source → per-domain deep analyses (`domain_*.md`); Phase 2 reads all domain syntheses → cross-domain synthesis (`synthesis_{date}.md`). Always reads original LaTeX, never just summary notes. |
 
 ### Search & Review
 

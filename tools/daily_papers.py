@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 _SSL_CTX = ssl.create_default_context()
 
 NS = "http://www.w3.org/2005/Atom"
-ARXIV_API = "http://export.arxiv.org/api/query"
+ARXIV_API = "https://export.arxiv.org/api/query"
 OPENALEX_API = "https://api.openalex.org"
 
 # ── LLM relevance scoring ──────────────────────────────────────────

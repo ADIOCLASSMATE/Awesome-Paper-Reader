@@ -1,11 +1,10 @@
 {
   "tasks": [
     {
-      "id": "72a65cc8",
+      "id": "ee1ca23a",
       "cron": "57 8 * * 1-5",
-      "prompt": "Run /daily-papers to discover today's new LLM papers on arXiv. Present the filtered and tiered list to the user.",
-      "createdAt": 1776149481907,
-      "lastFiredAt": 1776329523078,
+      "prompt": "/daily-papers",
+      "createdAt": 1777100045448,
       "recurring": true
     }
   ]

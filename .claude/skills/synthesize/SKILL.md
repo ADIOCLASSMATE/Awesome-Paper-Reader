@@ -1,16 +1,18 @@
 ---
 name: synthesize
-description: Synthesize insights across all read papers. Reads every note in knowledge/, classifies papers into research domains, produces detailed per-domain analysis with trends, gaps, and cross-paper insights. Supports full re-synthesis from scratch. Use when user says "synthesize", "summarize all papers", "what insights", "organize my readings", "research trends", or "give me an overview".
+description: Synthesize insights across all read papers. Two-phase pipeline — Phase 1 produces per-domain deep analyses from .tex source, Phase 2 produces cross-domain synthesis from domain analyses. Always reads original LaTeX, never just summary notes. Use when user says "synthesize", "summarize all papers", "what insights", "organize my readings", "research trends", or "give me an overview".
 argument-hint: [domain-or-empty-for-all]
-allowed-tools: Bash(*), Read, Grep, Glob, Write
+allowed-tools: Bash(*), Read, Grep, Glob, Write, Agent
 ---
 
 # Synthesize — Cross-Paper Insight Formation
 
 Synthesize: $ARGUMENTS
 
-> **CRITICAL RULE: PDF IS BANNED.** This skill only reads from local knowledge notes and .tex source.
-> It does not download or access any external resources.
+> **CRITICAL RULES:**
+> 1. **PDF IS BANNED.** Never download or link to PDF files.
+> 2. **NOTES ALONE ARE INSUFFICIENT.** Per-domain analysis MUST read from .tex source files in `papers/archive/{domain}/{id}/` or `papers/inbox/{id}/`. Summary notes are used for classification and cross-referencing only — the actual technical content, equations, experimental details, and nuanced findings must come from the original LaTeX.
+> 3. **Shallow synthesis is unacceptable.** Every domain analysis must trace technical threads with evidence, identify contradictions, and expose open gaps with untried combinations.
 
 ## Constants
 
@@ -18,6 +20,8 @@ Synthesize: $ARGUMENTS
 - **DAILY_DIR** — `knowledge/daily/` relative to project root. Contains daily paper lists.
 - **PAPERS_DIR** — `papers/` relative to project root. Contains LaTeX source in `inbox/` and `archive/`.
 - **OUTPUT_DIR** — `knowledge/syntheses/` relative to project root. Synthesis outputs go here.
+- **DOMAIN_SYNTHESES** — Per-domain synthesis files: `knowledge/syntheses/domain_{domain}.md`
+- **CROSS_DOMAIN_SYNTHESIS** — Final synthesis: `knowledge/syntheses/synthesis_{date}.md`
 
 ## Dual-Zone Architecture
 
@@ -38,13 +42,34 @@ When synthesizing:
 
 > Overrides (append to arguments):
 > - `/synthesize` — synthesize across all papers (default)
-> - `/synthesize agent` — focus on a specific domain only
-> - `/synthesize - full` — force complete re-synthesis, ignore cached synthesis
+> - `/synthesize agent` — focus on a specific domain only (skips Phase 2)
+> - `/synthesize - full` — force complete re-synthesis, ignore cached domain syntheses
 > - `/synthesize - since: 2026-04-01` — only include papers read after this date
-> - `/synthesize - depth: deep` — extremely detailed analysis (slower, more tokens)
-> - `/synthesize - depth: quick` — brief overview (faster)
+> - `/synthesize - depth: deep` — exhaustive analysis with equation-level connections (default for Phase 1)
+> - `/synthesize - depth: quick` — brief overview (reads notes only, no .tex)
 
-## Workflow
+## Two-Phase Pipeline
+
+The synthesis operates in two phases. This is **mandatory**, not optional:
+
+```
+Phase 1: Per-Domain Deep Analysis (from .tex source)
+  ├── Read .tex source for every paper in each domain
+  ├── Produce domain_{domain}.md for each domain
+  └── Can be parallelized across domains via agents
+
+Phase 2: Cross-Domain Synthesis (from domain syntheses)
+  ├── Read all domain_*.md files produced in Phase 1
+  ├── Identify convergent/divergent threads across domains
+  ├── Produce synthesis_{date}.md
+  └── Must read ALL domain files before writing
+```
+
+**Why two phases?** Per-domain analysis requires deep reading of .tex source (thousands of lines per paper). Cross-domain synthesis requires holistic view across all domains. Combining them in one pass leads to shallow analysis — which is exactly what this skill is designed to prevent.
+
+---
+
+## Phase 1: Per-Domain Deep Analysis
 
 ### Step 1: Parse Arguments
 
@@ -53,9 +78,11 @@ Parse `$ARGUMENTS` for:
 - **Domain filter**: optional — only synthesize papers in a given research domain (e.g. "agent", "reasoning", "safety")
 - **`- full`**: force complete re-synthesis from scratch, delete any previous synthesis files
 - **`- since: DATE`**: only include papers whose note date is on or after DATE (YYYY-MM-DD)
-- **`- depth: LEVEL`**: `quick` (brief overview) / `normal` (default) / `deep` (exhaustive analysis)
+- **`- depth: LEVEL`**: `quick` (notes only, fast) / `normal` (selective .tex reading) / `deep` (full .tex reading, default)
 
-### Step 2: Collect All Notes
+**If `depth: quick`**: Skip .tex reading entirely. Use summary notes only. Produce abbreviated domain analyses. This is appropriate only for quick check-ins, not for real synthesis.
+
+### Step 2: Collect and Classify Papers
 
 Scan both inbox and archive for paper notes:
 
@@ -67,21 +94,11 @@ find knowledge/inbox/ -name "summary_*.md" | sort
 find knowledge/archive/ -name "summary_*.md" | sort
 ```
 
-For each note, read the full content using the Read tool.
+Read each note fully for classification. For each paper, determine:
 
-Also scan `knowledge/daily/` for daily paper lists:
-
-```bash
-find knowledge/daily/ -name "*.md" | sort
-```
-
-**If no notes exist in either inbox or archive**: Report that there are no read papers to synthesize. Suggest running `/daily-papers` and `/read-paper` first.
-
-**Track which notes come from inbox vs archive** — this is important for Step 7 (archiving).
-
-### Step 3: Classify Papers by Research Domain
-
-Read every note fully. For each paper, determine its primary and secondary research domains.
+- **Primary domain**: the domain where the paper makes its main contribution
+- **Secondary domains**: any other domains the paper touches
+- **Key contribution type**: `novel_method` / `new_benchmark` / `empirical_study` / `theoretical` / `framework` / `analysis`
 
 **LLM research domains** (non-exhaustive — add new domains as they emerge):
 
@@ -98,80 +115,221 @@ Read every note fully. For each paper, determine its primary and secondary resea
 | **Architecture** | New model architectures, MoE, attention variants, tokenization |
 | **Data & Synthesis** | Synthetic data, data quality, data mixing, data contamination |
 
-For each paper, assign:
-- **Primary domain**: the domain where the paper makes its main contribution
-- **Secondary domains**: any other domains the paper touches
-- **Key contribution type**: `novel_method` / `new_benchmark` / `empirical_study` / `theoretical` / `framework` / `analysis`
-
 Build a classification table:
 
 ```text
-| Paper | Tag | Primary Domain | Secondary | Contribution Type |
-|-------|-----|---------------|-----------|-------------------|
+| Paper | Tag | Primary Domain | Secondary | Type |
+|-------|-----|---------------|-----------|------|
 ```
 
-### Step 4: Per-Domain Deep Analysis
+Also scan `knowledge/daily/` for daily paper lists (provides context on what was available but not read):
 
-For each domain that has papers, produce a **detailed analysis**. The depth depends on the `- depth` flag.
+```bash
+find knowledge/daily/ -name "*.md" | sort
+```
 
-#### Normal depth analysis (default):
+**If no notes exist in either inbox or archive**: Report that there are no read papers to synthesize. Suggest running `/daily-papers` and `/read-paper` first.
 
-**Domain: {Domain Name}**
+### Step 3: Per-Domain .tex Reading and Analysis
 
-**Paper Landscape**:
-- List all papers in this domain with their one-line core contribution
-- Identify which papers are complementary vs. competing approaches
+For **each domain that has papers**, produce a detailed domain synthesis. This step MUST read from .tex source files.
 
-**Technical Thread**:
-- Trace the evolution of ideas: what problem did each paper solve that the previous couldn't?
-- Identify shared assumptions across papers and whether they hold
-- Map methodological connections: which papers build on which?
+**How to locate .tex source**: For each paper in a domain, the .tex source is at:
+- `papers/archive/{domain}/{arxiv_id}/` (archived papers)
+- `papers/inbox/{arxiv_id}/` (new papers not yet archived)
 
-**Key Findings**:
-- Aggregate the most important results across papers
-- Note where papers agree or contradict each other
-- Highlight surprising or counter-intuitive results
+**Reading strategy for .tex files**:
+- Start with the main .tex file (usually `main.tex`, `acl_latex.tex`, or the largest .tex file)
+- Read the full main text (Abstract through Conclusion). Skip `\appendix` and everything after it — large .tex files are almost always large because of appendices (proofs, supplementary experiments, prompts), not main content
+- For papers with multiple .tex files (sections split across files), read all substantive section files, but skip files clearly named `appendix*`, `supplement*`, `supp*`, `extra*`
+- If a paper's main body .tex is still very large after excluding appendices (>3MB), it likely contains excessive figures/tables inline — read it in chunks, focusing on prose sections
 
-**Open Gaps**:
-- What problems are mentioned but not solved?
-- What assumptions remain unchallenged?
-- What combinations of ideas from different papers haven't been tried?
+#### Domain Synthesis Output Template
 
-**Research Trends**:
-- Is this area heating up or cooling down?
-- What direction are the latest papers pushing?
-- What's the community converging on vs. still debating?
+Save to `knowledge/syntheses/domain_{domain_name}.md`:
 
-#### Deep depth adds:
-- Full methodological comparison table (approach, assumptions, limitations, scale)
-- Detailed equation-level connections between papers
-- Reproducibility assessment for each paper
-- Concrete research proposal for each identified gap with experimental design sketch
+```markdown
+# Domain Synthesis: {Domain Name}
 
-#### Quick depth reduces to:
-- Bullet list of papers with one-sentence contribution
-- 2-3 sentence trend summary
-- 1-2 identified gaps
+**Date**: {date}
+**Papers**: {N}
+**Scope**: {one-sentence description of what this domain's papers cover}
 
-### Step 5: Cross-Domain Synthesis
+---
 
-After per-domain analysis, step back and look across domains:
+## 1. Paper Landscape
 
-**Convergent Threads**: Where are different domains converging on similar ideas?
-- Example: "Both agent safety and reasoning research are moving toward test-time verification mechanisms"
+| # | Paper | One-Line Contribution | Positioning |
+|---|-------|----------------------|-------------|
+{table with all papers, their core contribution, and how they relate to prior work}
 
-**Divergent Approaches**: Where are similar problems being tackled with fundamentally different approaches?
-- Example: "Scaling reasoning via search (Tree-of-Thought) vs. via training (RL on CoT) — different bets on compute allocation"
+**Overall arc**: {1-2 sentences describing the overarching narrative across these papers}
 
-**Underexplored Intersections**: What combinations of domains have potential but few papers?
-- Example: "Agent + Efficiency: how to make tool-augmented agents faster without losing capability"
+---
 
-**Meta-Observations**: Patterns across the entire reading corpus
-- What methodologies are becoming standard?
+## 2. Technical Thread
+
+### Thread A: {Thread Name}
+
+{Trace the evolution of ideas within this thread. For each paper in the thread:
+- What problem did it solve that prior work couldn't?
+- What assumption does it make or challenge?
+- How does it connect to other papers in the thread?
+
+Be specific — cite equations, experimental results, and methodological details from the .tex source.}
+
+### Thread B: {Thread Name}
+
+{Repeat for each major thread. Typically 2-4 threads per domain.}
+
+### Shared Assumptions
+
+- {Assumption 1}: Which papers hold it? Is it justified?
+- {Assumption 2}: ...
+
+### Divergence Points
+
+- Where papers disagree or take fundamentally different approaches to the same problem
+
+---
+
+## 3. Key Findings
+
+### Aggregated Results
+
+| Paper | Key Metric | Main Result |
+|-------|-----------|-------------|
+{quantitative results table}
+
+### Agreements
+
+1. **{Finding}**: {Which papers confirm it, with specific evidence}
+2. ...
+
+### Contradictions and Tensions
+
+1. **{Tension}**: {Paper A claims X, Paper B shows Y. Possible resolution: ...}
+2. ...
+
+---
+
+## 4. Open Gaps
+
+### Unsolved Problems
+
+1. **{Problem}**: {Why it matters, what's blocking progress}
+
+### Unchallenged Assumptions
+
+1. **{Assumption}**: {Why it might be wrong, what evidence challenges it}
+
+### Untried Combinations
+
+1. **{Combination}**: {Paper A's method + Paper B's insight. Why it could work. What would need to change.}
+
+---
+
+## 5. Research Trends
+
+### Converging Trends
+
+1. **{Trend}**: {Which papers demonstrate it, what's driving convergence}
+
+### Still Debated
+
+1. **{Question}**: {Positions taken by different papers, what evidence would resolve it}
+
+---
+
+## 6. Methodological Comparison Table
+
+| Approach | Key Assumption | Limitations | Scale | Main Result |
+|----------|---------------|-------------|-------|-------------|
+{structured comparison of all methods in the domain}
+```
+
+**Critical requirements for domain synthesis**:
+- Every claim must reference specific evidence from the .tex source (not just the summary note)
+- Technical threads must trace idea evolution with specific methodological details
+- Contradictions must be analyzed, not just listed
+- Untried combinations must explain *why* they could work, not just that they haven't been tried
+- The methodological comparison table must be complete for all papers in the domain
+
+#### Parallel Execution
+
+When synthesizing all domains (no domain filter), **use parallel agents** to produce domain syntheses simultaneously:
+
+```
+For each domain with papers:
+  Spawn Agent (subagent_type="general-purpose") with:
+    - List of papers in this domain (arxiv_id, tag, notes path, .tex source path)
+    - Domain synthesis template
+    - Instructions to read ALL .tex source files and produce the domain analysis
+    - Output file path: knowledge/syntheses/domain_{domain}.md
+```
+
+**Agent prompt must include**:
+1. The exact .tex file paths for each paper in the domain
+2. The full domain synthesis template (sections 1-6)
+3. Explicit instruction: "YOU MUST WRITE THE OUTPUT FILE before finishing. Read all .tex sources first, then write the complete domain synthesis."
+4. For papers with very large .tex files (>3MB after excluding appendices): "Read main text in chunks, focusing on prose sections. Skip inline figures/tables if needed to conserve context."
+
+**If an agent fails** (context exhaustion, API error):
+- Retry with reduced scope: mark the largest .tex files as "NOTE ONLY"
+- Ensure the retry prompt includes "YOU MUST WRITE THE FILE" instruction
+- Maximum 2 retries per domain
+
+### Step 4: Check Phase 1 Completion
+
+Before proceeding to Phase 2, verify:
+
+```bash
+ls knowledge/syntheses/domain_*.md
+```
+
+All domains with papers must have a corresponding domain synthesis file. If any are missing, produce them now.
+
+**If `- full` is specified**: Delete existing domain synthesis files before Phase 1, forcing complete re-synthesis.
+
+---
+
+## Phase 2: Cross-Domain Synthesis
+
+### Step 5: Read All Domain Syntheses
+
+Read EVERY `domain_*.md` file produced in Phase 1. Do NOT skip any — cross-domain insights emerge from reading across all domains, not cherry-picking.
+
+```bash
+find knowledge/syntheses/ -name "domain_*.md" | sort
+```
+
+Read each file fully using the Read tool.
+
+### Step 6: Cross-Domain Analysis
+
+After reading all domain syntheses, identify:
+
+**Convergent Threads**: Where different domains converge on the same insight or principle.
+- Must cite specific papers from different domains that independently arrive at the same conclusion
+- Provide evidence tables showing the convergence
+- Explain the mechanism: why do different approaches lead to the same finding?
+
+**Divergent Approaches**: Where similar problems are tackled with fundamentally different approaches across domains.
+- Must present both sides with evidence
+- Analyze why the divergence exists (different assumptions? different constraints? different evaluation criteria?)
+- Identify conditions under which each approach is superior
+
+**Underexplored Intersections**: What domain combinations have potential but lack papers connecting them.
+- Must explain *why* the intersection is promising (what does each domain contribute?)
+- Must identify specific paper pairs or methods that could be combined
+- Assess feasibility (low barrier = existing methods can compose; high barrier = requires new architecture)
+
+**Meta-Observations**: Patterns across the entire reading corpus.
+- What methodologies are becoming standard across domains?
 - What evaluation practices need improvement?
 - What assumptions does the field take for granted that might be wrong?
 
-### Step 6: Research Opportunity Map
+### Step 7: Research Opportunity Map
 
 Produce a prioritized list of research opportunities:
 
@@ -184,17 +342,17 @@ Produce a prioritized list of research opportunities:
 ```
 
 Criteria for priority:
-- **HIGH**: Multiple papers point to the gap, solution seems tractable, high impact potential
-- **MEDIUM**: Gap identified but solution unclear, or single paper points to it
+- **HIGH**: Multiple papers across domains point to the gap, solution seems tractable, high impact potential
+- **MEDIUM**: Gap identified but solution unclear, or single domain points to it
 - **LOW**: Speculative, requires significant resources, or unclear impact
 
-### Step 7: Archive Inbox Papers
+### Step 8: Archive Inbox Papers
 
-After producing the synthesis, **move all inbox papers and notes to the archive**, organized by domain.
+After producing the cross-domain synthesis, **move all inbox papers and notes to the archive**, organized by domain.
 
 For each paper that was in `knowledge/inbox/`:
 
-1. **Determine its domain** from the classification in Step 3
+1. **Determine its domain** from the classification in Step 2
 2. **Move the knowledge note** from `knowledge/inbox/summary_{tag}.md` to `knowledge/archive/{domain}/summary_{tag}.md`
    - Create the domain directory if it doesn't exist: `mkdir -p knowledge/archive/{domain}`
 3. **Move the .tex source** from `papers/inbox/{id}/` to `papers/archive/{domain}/{id}/`
@@ -202,17 +360,6 @@ For each paper that was in `knowledge/inbox/`:
    - Domain directory names use snake_case: `safety_alignment`, `training_scaling`, `reasoning`, `architecture`, `efficiency`, `multimodal`, `retrieval_rag`, `evaluation`, `data_synthesis`, `agent`
 
 **Both `knowledge/archive/` and `papers/archive/` must use the same domain subdirectory structure.**
-
-Example:
-```bash
-# Note: from inbox to domain-organized archive (same structure as papers/)
-mkdir -p knowledge/archive/safety_alignment
-mv knowledge/inbox/summary_agent_security.md knowledge/archive/safety_alignment/summary_agent_security.md
-
-# Source: from inbox to domain-organized archive
-mkdir -p papers/archive/safety_alignment
-mv papers/inbox/2604.11790 papers/archive/safety_alignment/
-```
 
 **Papers already in archive are NOT moved** — they stay in their existing domain directory.
 
@@ -222,61 +369,73 @@ After archiving, verify:
 - `knowledge/archive/` contains all synthesized notes
 - `papers/archive/{domain}/` contains all synthesized .tex sources
 
-### Step 8: Save Synthesis Output
+### Step 9: Save Cross-Domain Synthesis Output
 
 Save to `knowledge/syntheses/synthesis_{date}.md`:
-
-```
-knowledge/syntheses/synthesis_2026-04-14.md
-```
-
-**If `- full` is specified**, delete any previous synthesis files in `knowledge/syntheses/` before writing (fresh start).
 
 **Output format**:
 
 ```markdown
 # Research Synthesis — {date}
 
-- **Papers analyzed**: {N}
+- **Papers analyzed**: {N} (all read from .tex source)
 - **Domains identified**: {N}
 - **Date range**: {earliest} to {latest}
 - **Depth**: {quick/normal/deep}
 
 ## Classification
 
+### New Papers (Inbox → Archive)
+
 | Paper | Tag | Primary Domain | Secondary | Type |
 |-------|-----|---------------|-----------|------|
 {table}
 
+### Previously Archived Papers ({N})
+
+Classified across all {N} domains; see individual domain syntheses for full listing.
+
 ---
 
-## Domain Analyses
+## Domain Summaries
 
-### {Domain 1}
-
-{full per-domain analysis from Step 4}
-
-### {Domain 2}
-
-{full per-domain analysis from Step 4}
+| Domain | Papers | Core Finding |
+|--------|--------|-------------|
+{one-row-per-domain summary table}
 
 ---
 
 ## Cross-Domain Synthesis
 
-{from Step 5}
+### Convergent Thread 1: {Thread Name}
+
+{Detailed analysis with evidence table across domains}
+
+### Convergent Thread 2: {Thread Name}
+
+{...}
+
+### Divergent Thread 1: {Thread Name}
+
+{Detailed analysis showing opposing approaches}
+
+### Underexplored Intersection 1: {Intersection}
+
+{Why promising, what each domain contributes, feasibility}
+
+{...}
 
 ---
 
 ## Research Opportunity Map
 
-{from Step 6}
+| Priority | Opportunity | Domain(s) | Evidence | Feasibility |
+|----------|------------|-----------|----------|-------------|
+{table}
 
 ---
 
 ## Reading Recommendations
-
-Based on the current synthesis, suggest next papers to read:
 
 ### Fill gaps in existing domains
 - {paper suggestion} — would clarify {gap}
@@ -289,17 +448,18 @@ Based on the current synthesis, suggest next papers to read:
 
 ---
 
-*Generated by synthesize skill*
+*Generated by synthesize skill (two-phase, .tex-level reading)*
 *Next: /daily-papers to discover more, /read-paper ID to read specific papers*
 ```
 
-### Step 8: Report
+### Step 10: Report
 
 Present a concise summary to the user:
 
 ```text
 Synthesized {N} papers across {M} domains
-  Output: knowledge/syntheses/synthesis_{date}.md
+  Phase 1: {M} domain syntheses → knowledge/syntheses/domain_*.md
+  Phase 2: Cross-domain synthesis → knowledge/syntheses/synthesis_{date}.md
 
   Domains:
     {domain 1}: {N} papers — {one-line trend}
@@ -310,17 +470,36 @@ Synthesized {N} papers across {M} domains
   Top opportunity: {highest priority research gap}
 ```
 
+---
+
+## Incremental Synthesis (Subsequent Runs)
+
+When running `/synthesize` after the first time:
+
+1. **Check for existing domain syntheses** in `knowledge/syntheses/domain_*.md`
+2. **If no `- full` flag**: Only re-synthesize domains that have new inbox papers. Domains with no new papers keep their existing domain synthesis.
+3. **If `- full` flag**: Delete all domain syntheses and re-synthesize from scratch.
+4. **Cross-domain synthesis is always regenerated** (it must reflect the current state of all domain syntheses).
+
+For domains with new papers:
+- Read the new .tex sources + re-read the existing domain synthesis
+- Update the domain synthesis to incorporate the new papers
+- The new papers may create new threads, resolve existing tensions, or open new gaps
+
+---
+
 ## Key Rules
 
 - **PDF IS BANNED.** Never download or link to PDF files.
-- **Read ALL notes fully** before synthesizing. Shallow reading leads to shallow synthesis.
-- The synthesis must be **grounded in evidence** from the actual paper notes. Every claim should reference which paper(s) support it. No unsupported speculation.
+- **NOTES ALONE ARE INSUFFICIENT.** Per-domain analysis MUST read .tex source. Summary notes are for classification and cross-referencing only. The depth of insight is directly proportional to how much original source you read.
+- **Two-phase pipeline is mandatory.** Phase 1 (per-domain from .tex) then Phase 2 (cross-domain from domain syntheses). Never skip Phase 1.
+- **The synthesis must be grounded in evidence** from the actual .tex source. Every claim should reference which paper(s) support it, ideally with specific sections, equations, or experimental results. No unsupported speculation.
 - **Never overwrite paper notes** (`knowledge/summary_*.md`). Only write to `knowledge/syntheses/`.
 - When `- full` is specified, rebuild everything from scratch — don't carry over insights from previous syntheses without re-deriving them.
 - Classification into domains is judgment-based — when uncertain, assign both primary and secondary domains.
 - New domains can emerge. If a paper doesn't fit existing domains, create a new one and explain why.
-- The "Connections" section in each paper note is the primary input for cross-paper linking — use it heavily.
 - Always distinguish between what papers actually show vs. what they claim. Flag overclaimed results.
 - When papers contradict each other, present both sides and analyze why (different setups? different metrics? different assumptions?).
 - If there's only 1 paper in a domain, still analyze it but note that cross-paper insights are limited.
 - Daily paper lists in `knowledge/daily/` provide context on what was available but not read — reference them in gap analysis.
+- **Shallow synthesis is a failure mode.** If a domain analysis could have been produced from the abstract alone, it's not deep enough. The value of reading .tex source is in extracting methodological details, experimental nuances, and implicit assumptions that aren't visible in abstracts or summaries.
